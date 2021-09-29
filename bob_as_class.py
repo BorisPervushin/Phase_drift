@@ -3,11 +3,9 @@ import numpy as np
 import math as mt
 import matplotlib.pyplot as plt
 import json
-import matplotlib.colors as mcolors
-import random
 
 
-def file_transorm(old_filename: str, new_filename: str, start_index=4675, sample_count=200000) -> None:
+def file_transform(old_filename: str, new_filename: str, start_index=4675, sample_count=200000) -> None:
     """Трансформация файла: удаление инфомации о параметрах осциллографа, ограничение количетсва точек"""
     df = pd.read_csv(old_filename)  # , dtype={"Time": float, "Amplitude": float})
     (n, m) = df.shape
@@ -31,8 +29,6 @@ class Bob:
     def __init__(self, data_filename: str,
                  bob_table_filename='Bob_table_from_class.csv',
                  global_index=0,
-                 statistics_ref_1_pulse=(0, 0),
-                 statistics_ref_2_pulse=(0, 0),
                  max_std=0.001,
                  total_cycle_number=1,
                  adc_voltage_range=2,
@@ -42,15 +38,14 @@ class Bob:
                  max_indexes_in_pulse=2000):
         self.global_index = global_index  # индекс начала текущего цикла
         self.state_table = {'Pulse type': [], 'Quadrature': [], 'Value': [], 'Bits': []}  # итоговая таблица
-        self.statistics_ref_1_pulse = statistics_ref_1_pulse  # статистика первого ипульса в референсе:
-        # Первое значение - индекс-середина импульса, ширина в индекса импульса
-        self.statistics_ref_2_pulse = statistics_ref_2_pulse  # статистика второго ипульса в референсе:
+        self.statistics_ref = [[0, 0] for i in range(ref_sig_quantity[0])]  # массив статистики ипульсов в референсе:
         # Первое значение - индекс-середина импульса, ширина в индекса импульса
         self.max_std = max_std  # максимальное значение СКО по импульсам
         self.total_cycle_number = total_cycle_number  # общее число циклов, которое нужно выполнить, если хватит
         self.adc_voltage_range = adc_voltage_range  # диапазон АЦП V p-p
         self.adc_resolution = adc_resolution  # битность АЦП
         self.ref_sig_quantity = ref_sig_quantity
+        self.cycle_number = 0
         self.ref_mid_indexes = []  # индексы середин референсных импульсов:
         # каждый элемент self.ref_mid_indexes является массивом середин референсных импульсов,
         # соответствующих одному циклу
@@ -75,6 +70,7 @@ class Bob:
         ])
         self.min_indexes_in_pulse = min_indexes_in_pulse
         self.max_indexes_in_pulse = max_indexes_in_pulse
+        self.ref_len_in_indexes_stats = 0
 
     def bob_adc(self, voltage_value: float) -> str:
         """Оцифровка: возвращение битовой последовательности"""
@@ -105,61 +101,104 @@ class Bob:
         pulses_in_ref = self.ref_sig_quantity[0]
         indexes_for_ref = [[] for i in range(pulses_in_ref + 2)]  # возвращаемый список
         i_pulse_start = self.global_index
+        index_next_pulse = i_pulse_start
+        using_statistics = False
+        if self.global_index != 0:
+            means_of_ref_pulses = [
+                np.mean(self.samples[1][
+                        mt.ceil(self.global_index + ref_center - ref_width * 0.9):
+                        mt.floor(self.global_index + ref_center + ref_width * 0.9)]
+                        )
+                for ref_center, ref_width in self.statistics_ref
+            ]
 
-        for j in range(pulses_in_ref):
-            checking_std = self.max_std
-            """"Цикл поиска референсных импульсов"""
-            # indexes_for_ref[j].append(i_pulse_start)
-            i = i_pulse_start + self.min_indexes_in_pulse
-            checking_std = max(self.max_std, float(np.std(self.samples[1][i_pulse_start:i - 1])))
-            while abs(self.samples[1][i] - np.mean(self.samples[1][i_pulse_start:i])) <= checking_std * 5:
-                # проверка выхода за границы пяти СКО от среднего значения по значениям пмплитуд
+            ref_ampl_bounds = [[mean - self.max_std * 5, mean + self.max_std * 5] for mean in means_of_ref_pulses]
+
+            for bound_index, bounds in enumerate(ref_ampl_bounds[:-1]):
+                for bound in bounds:
+                    if ref_ampl_bounds[bound_index + 1][0] <= bound <= ref_ampl_bounds[bound_index + 1][1]:
+                        using_statistics = True
+
+        if using_statistics:
+            ref_left_bounds = [mt.floor(ref_stats[0] - ref_stats[1] * 0.5) for ref_stats in self.statistics_ref]
+            ref_center_bounds = [ref_stats[0] for ref_stats in self.statistics_ref]
+            ref_right_bounds = [mt.floor(ref_stats[0] + ref_stats[1] * 0.5) for ref_stats in self.statistics_ref]
+            indexes_for_ref = [[ref_left_bounds[pulse_count] + self.global_index,
+                                ref_center_bounds[pulse_count] + self.global_index,
+                                ref_right_bounds[pulse_count] + self.global_index,
+                                np.mean(self.samples[1][ref_left_bounds[pulse_count] + self.global_index:
+                                                        ref_right_bounds[pulse_count] + self.global_index])]
+                               for pulse_count in range(self.ref_sig_quantity[0])]
+            indexes_for_ref.append(self.max_std)
+            indexes_for_ref.append([self.global_index, self.global_index + self.ref_len_in_indexes_stats])
+
+        else:
+            for j in range(pulses_in_ref):
+                checking_std = self.max_std
+                """"Цикл поиска референсных импульсов"""
+                # indexes_for_ref[j].append(i_pulse_start)
+                i = i_pulse_start + self.min_indexes_in_pulse
                 checking_std = max(self.max_std, float(np.std(self.samples[1][i_pulse_start:i - 1])))
-                i += 1
+                while abs(self.samples[1][i] - np.mean(self.samples[1][i_pulse_start:i])) <= checking_std * 5:
+                    # проверка выхода за границы пяти СКО от среднего значения по значениям пмплитуд
+                    checking_std = max(self.max_std, float(np.std(self.samples[1][i_pulse_start:i - 1])))
+                    i += 1
 
-            pulse_std = np.std(self.samples[1][i_pulse_start:i])  # СКО полученного импульса
-            i -= 1
-            # TODO: Проверить первое условие выхода из цикла при сдвиге левой границы влево
-            i_left = i_pulse_start
-            while abs(self.samples[1][i_pulse_start - 1] -
-                      np.mean(self.samples[1][i_pulse_start:i + 1])) < checking_std * 5 \
-                    and i_pulse_start >= 1 \
-                    and abs(i_pulse_start - i_left) <= self.max_indexes_in_pulse:
-                """Сдвиг левой границы"""
-                i_pulse_start -= 1
-                checking_std = max(self.max_std, float(np.std(self.samples[1][i_pulse_start:i - 1])))
-            if abs(i_pulse_start - i_left) >= self.max_indexes_in_pulse:
-                i_pulse_start = i_left
-            if j == 0:
-                indexes_for_ref[-1].append(i_pulse_start)
-            indexes_for_ref[j].append(i_pulse_start)
-            self.ref_left_indexes.append(i_pulse_start)
-            # print(i_pulse_start)
-            indexes_for_ref[j].append(int((i + i_pulse_start) / 2))  # добавление центральной точки
-            # в список индексов импульса
-            self.ref_mid_indexes.append(int((i + i_pulse_start) / 2))
-            indexes_for_ref[j].append(i)  # добавление конечной точки импульса
-            self.ref_right_indexes.append(i)
-            indexes_for_ref[-2].append(pulse_std)  # добавление в список СКО импульсов СКО нынешнего импульса
-            indexes_for_ref[j].append(
-                np.mean(self.samples[1][i_pulse_start:i]))  # добавление среднего значения амплитуды импульса
-            index_next_pulse = i + 1
+                pulse_std = np.std(self.samples[1][i_pulse_start:i])  # СКО полученного импульса
+                i -= 1
+                # TODO: Проверить первое условие выхода из цикла при сдвиге левой границы влево
+                i_left = i_pulse_start
+                while abs(self.samples[1][i_pulse_start - 1] -
+                          np.mean(self.samples[1][i_pulse_start:i + 1])) < checking_std * 5 \
+                        and i_pulse_start >= 1 \
+                        and abs(i_pulse_start - i_left) <= self.max_indexes_in_pulse:
+                    """Сдвиг левой границы"""
+                    i_pulse_start -= 1
+                    checking_std = max(self.max_std, float(np.std(self.samples[1][i_pulse_start:i - 1])))
+                if abs(i_pulse_start - i_left) >= self.max_indexes_in_pulse:
+                    i_pulse_start = i_left
+                if j == 0:
+                    indexes_for_ref[-1].append(i_pulse_start)
+                indexes_for_ref[j].append(i_pulse_start)
+                self.ref_left_indexes.append(i_pulse_start)
+                # print(i_pulse_start)
+                indexes_for_ref[j].append(int((i + i_pulse_start) / 2))  # добавление центральной точки
+                # в список индексов импульса
+                self.ref_mid_indexes.append(int((i + i_pulse_start) / 2))
+                indexes_for_ref[j].append(i)  # добавление конечной точки импульса
+                self.ref_right_indexes.append(i)
+                indexes_for_ref[-2].append(pulse_std)  # добавление в список СКО импульсов СКО нынешнего импульса
+                indexes_for_ref[j].append(
+                    np.mean(self.samples[1][i_pulse_start:i]))  # добавление среднего значения амплитуды импульса
+                index_next_pulse = i + 1
 
-            for index_next_pulse in range(i + 1, self.max_indexes_in_pulse):
-                # цикл по точкам после найденного импульса для определения точки следующего импульса
-                if abs(self.samples[1][index_next_pulse] - self.samples[1][index_next_pulse + 5]) < pulse_std * 5:
-                    # условие, что разница амплитуд двух последовательных точек будет меньше 5 СКО предыдущего импульса
-                    break
-            index_next_pulse += 4
-            # print(index_next_pulse)
-            i_pulse_start = index_next_pulse + 4
-        try:
+                for index_next_pulse in range(i + 1, self.max_indexes_in_pulse):
+                    # цикл по точкам после найденного импульса для определения точки следующего импульса
+                    if abs(self.samples[1][index_next_pulse] - self.samples[1][index_next_pulse + 5]) < pulse_std * 5:
+                        # условие, что разница амплитуд двух последовательных точек будет меньше 5 СКО предыдущего импульса
+                        break
+                index_next_pulse += 4
+                i_pulse_start = index_next_pulse + 4
             indexes_for_ref[-1].append(index_next_pulse)
-        except NameError:
-            print('Number of ref pulses in cycle is equal to 0, set the right value.')
-            exit()
-        indexes_for_ref[-2] = max(
-            indexes_for_ref[-2])  # замена списко СКО всех импульсов на максимальный СКО по имульсам
+
+            indexes_for_ref[-2] = max(
+                indexes_for_ref[-2])  # замена списко СКО всех импульсов на максимальный СКО по имульсам
+
+            self.ref_len_in_indexes_stats = \
+                self.ref_len_in_indexes_stats * (self.cycle_number / (self.cycle_number + 1)) + \
+                (indexes_for_ref[-1][1] - indexes_for_ref[-1][0]) / (self.cycle_number + 1)
+
+            for index_for_statistic, index_info in enumerate(indexes_for_ref[:-2]):
+                ref_center_for_statistic = index_info[1] - indexes_for_ref[0][0]
+                ref_width_for_statistic = index_info[2] - index_info[0]
+                self.statistics_ref[index_for_statistic] = [
+                    self.statistics_ref[index_for_statistic][0] * (
+                            self.cycle_number / (self.cycle_number + 1)) + ref_center_for_statistic / (
+                            self.cycle_number + 1),
+                    self.statistics_ref[index_for_statistic][1] * (
+                            self.cycle_number / (self.cycle_number + 1)) + ref_width_for_statistic / (
+                            self.cycle_number + 1)
+                ]
 
         return indexes_for_ref
 
@@ -206,6 +245,7 @@ class Bob:
             self.state_table['Quadrature'] += ['Q', 'Q']
         next_cycle = int((ref_indexes[-1][-1] - ref_indexes[-1][0]) * int(
             self.ref_sig_quantity[1] / self.ref_sig_quantity[0]) * 1.1) + ref_indexes[-1][-1]
+        self.cycle_number += 1
         self.global_index = next_cycle
 
 
@@ -230,14 +270,11 @@ class PlottingSignal:
 
 
 if __name__ == '__main__':
-    bob = Bob(data_filename='Ampl modul/amp and phase o-pi2 transformed.csv')
+    bob = Bob(data_filename='Ampl modul/amp and phase o-pi2 transformed.csv', total_cycle_number=10)
     # ref1 = bob.ref_pulse_definition()
-    for i in range(150):
+    for i in range(bob.total_cycle_number):
         bob.make_cycle()
     # sig1 = bob.signal_pulse_definition(ref1)
-
-    with open('bob_table_class.json', 'w') as json_file:
-        json.dump(bob.state_table, json_file, indent=4)
 
     df = pd.DataFrame(bob.state_table)
     df.to_csv('Bob class table.csv')
