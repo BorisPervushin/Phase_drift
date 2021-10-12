@@ -2,8 +2,9 @@ def alice_main(signal_to_ref_ratio=2):
     import pandas as pd
     import numpy as np
     from numpy import pi, cos, sin, sqrt, mean
+    import matplotlib.pyplot as plt
     import json
-    from math import atan2, floor
+    from math import atan2, floor, ceil
     from numpy.linalg import norm, inv
 
     def adc(voltage_value, voltage_range=2, resolution=12):
@@ -69,7 +70,7 @@ def alice_main(signal_to_ref_ratio=2):
         'Linear difference': [],
     }
     list_for_diff = []
-    Bob_table = pd.read_csv('Bob table.csv')
+    Bob_table = pd.read_csv('CSV files/Bob class table.csv')
     # print(Bob_table)
 
     # print(Alice_table)
@@ -90,10 +91,10 @@ def alice_main(signal_to_ref_ratio=2):
     amplitude_mod_att = Bob_table['Value'][2] / (alpha_first_cycle * cos(teta_am + teta_first_cycle))
     teta_am = teta_am + pi if amplitude_mod_att < 0 else teta_am
     amplitude_mod_att = abs(amplitude_mod_att)
-    print(teta_first_cycle)
-    print(teta_am)
-    print(amplitude_mod_att)
-    print(alpha_first_cycle)
+    # print(teta_first_cycle)
+    # print(teta_am)
+    # print(amplitude_mod_att)
+    # print(alpha_first_cycle)
     for p in range(55):
         Alice_table['Bob\'s quadrature'] += Bob_table['Quadrature'][p * index_step:(p + 1) * index_step].tolist()
         # Alice_table['Bob\'s quadrature'] += ['Q', 'P', 'Q', 'P', 'Q', 'P']
@@ -164,7 +165,7 @@ def alice_main(signal_to_ref_ratio=2):
             Alice_table['P'].append(item * sin(Alice_table['Phase'][i]))
         for l in range(count_ref_signal[0]):
             Alice_table['Ultimate state'].append('-')
-            Alice_table['Linear difference'].append('-')
+            Alice_table['Linear difference'].append(0)
             Alice_table['Alice bits'].append('-')
 
         for i in range(p * index_step, (p + 1) * index_step):
@@ -181,8 +182,16 @@ def alice_main(signal_to_ref_ratio=2):
             elif i > p * index_step + 1:
                 Alice_table['Ultimate state'].append(rotated_state[1][0])
                 Alice_table['Alice bits'].append(adc(rotated_state[1][0]))
-    print("Среднее разница значений Алисы и Боба: {}".format(mean(list_for_diff)))
-    print(list_for_diff)
+
+    print("Средняя разница значений Алисы и Боба: {}".format(mean(list_for_diff)))
+    print("Максимальная разница значений Алисы и Боба: {}".format(max(list_for_diff)))
+    print("Минимальная разница значений Алисы и Боба: {}".format(min(list_for_diff)))
+    df_for_diff = pd.DataFrame(list_for_diff)
+    plt.boxplot = df_for_diff.boxplot()
+    plt.show()
+    exit()
+
+    # # print(list_for_diff)
     # print(json.dumps(table, indent=4))
     """for item in Alice_table:
         print(item, len(Alice_table[item]))
@@ -197,9 +206,9 @@ def alice_main(signal_to_ref_ratio=2):
     df.rename({0: 'ref', 1: 'ref', 2: 'signal', 3: 'signal', 4: 'signal'}, axis='index')
     df.rename(index={0: "ref"})
     # print(df)
-    with pd.option_context('display.max_rows', None, 'display.max_columns', None):  # more options can be specified also
-        print(df)
-    df.to_csv('Alice table.csv')
+    # with pd.option_context('display.max_rows', None, 'display.max_columns', None):  # more options can be specified also
+    #     print(df)
+    df.to_csv('CSV files/Alice table.csv')
 
     # рассчет квадратур Боба
 

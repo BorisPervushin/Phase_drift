@@ -73,6 +73,8 @@ class Bob:
         self.max_indexes_in_pulse = max_indexes_in_pulse  # максимальное количество точек в
         # в импульсе (на глаз) подбирается для ограничения сдвига левой границы
         self.ref_len_in_indexes_stats = 0  # статистическое значение длины всех референсных импульсов
+        self.ref_center_dot_from_stat = []
+        self.using_stats = 0
 
     def bob_adc(self, voltage_value: float) -> str:
         """Оцифровка: возвращение битовой последовательности"""
@@ -106,7 +108,7 @@ class Bob:
         i_pulse_start = self.global_index
         index_next_pulse = i_pulse_start
         using_statistics = False
-        if self.global_index != 0:
+        if self.cycle_number != 0:
             means_of_ref_pulses = [
                 np.mean(self.samples[1][
                         mt.ceil(self.global_index + ref_center - ref_width * 0.9):
@@ -123,9 +125,12 @@ class Bob:
                         using_statistics = True
 
         if using_statistics:
-            ref_left_bounds = [mt.floor(ref_stats[0] - ref_stats[1] * 0.5) for ref_stats in self.statistics_ref]
-            ref_center_bounds = [ref_stats[0] for ref_stats in self.statistics_ref]
-            ref_right_bounds = [mt.floor(ref_stats[0] + ref_stats[1] * 0.5) for ref_stats in self.statistics_ref]
+            self.using_stats += 1
+            ref_left_bounds = [round(ref_stats[0] - ref_stats[1] * 0.4) for ref_stats in self.statistics_ref]
+            ref_center_bounds = [round(ref_stats[0]) for ref_stats in self.statistics_ref]
+            for ref_stats in self.statistics_ref:
+                self.ref_center_dot_from_stat.append(round(ref_stats[0]))
+            ref_right_bounds = [round(ref_stats[0] + ref_stats[1] * 0.4) for ref_stats in self.statistics_ref]
             indexes_for_ref = [[ref_left_bounds[pulse_count] + self.global_index,
                                 ref_center_bounds[pulse_count] + self.global_index,
                                 ref_right_bounds[pulse_count] + self.global_index,
@@ -140,10 +145,11 @@ class Bob:
                 checking_std = self.max_std
                 """"Цикл поиска референсных импульсов"""
                 # indexes_for_ref[j].append(i_pulse_start)
-                i = i_pulse_start + int(self.min_indexes_in_pulse * 0.5)
+                i = i_pulse_start + int(self.min_indexes_in_pulse * 0.8)
                 checking_std = max(self.max_std, float(np.std(self.samples[1][i_pulse_start:i - 1])))
+
                 while abs(self.samples[1][i] - np.mean(self.samples[1][
-                                                       i_pulse_start:i])) <= checking_std * 5 and i < i_pulse_start + self.max_indexes_in_pulse * 1.5:
+                                                       i_pulse_start:i])) <= checking_std * 6 and i < i_pulse_start + self.max_indexes_in_pulse * 1.5:
                     # проверка выхода за границы пяти СКО от среднего значения по значениям пмплитуд
                     checking_std = max(self.max_std, float(np.std(self.samples[1][i_pulse_start:i - 1])))
                     i += 1
@@ -190,8 +196,8 @@ class Bob:
                 indexes_for_ref[-2])  # замена списко СКО всех импульсов на максимальный СКО по имульсам
 
             self.ref_len_in_indexes_stats = \
-                self.ref_len_in_indexes_stats * (self.cycle_number / (self.cycle_number + 1)) + \
-                (indexes_for_ref[-1][1] - indexes_for_ref[-1][0]) / (self.cycle_number + 1)
+                mt.floor(self.ref_len_in_indexes_stats * (self.cycle_number / (self.cycle_number + 1)) + \
+                         (indexes_for_ref[-1][1] - indexes_for_ref[-1][0]) / (self.cycle_number + 1))
 
             for index_for_statistic, index_info in enumerate(indexes_for_ref[:-2]):
                 ref_center_for_statistic = index_info[1] - indexes_for_ref[0][0]
@@ -204,20 +210,21 @@ class Bob:
                             self.cycle_number / (self.cycle_number + 1)) + ref_width_for_statistic / (
                             self.cycle_number + 1)
                 ]
-        print(indexes_for_ref)
+
         return indexes_for_ref
 
     def signal_pulse_definition(self, ref_info: list) -> list:
         pulse_values = []
         for signal_number in range(round(self.ref_sig_quantity[1] / self.ref_sig_quantity[0])):
             index_shift = signal_number * (ref_info[-1][1] - ref_info[-1][0])
-            pulse_centers = [item[1] - ref_info[-1][0] + ref_info[-1][1] + index_shift for item in ref_info[:-2]]
+            pulse_centers = [int(item[1] - ref_info[-1][0] + ref_info[-1][1] + index_shift) for item in ref_info[:-2]]
             pulse_width = [mt.floor((item[2] - item[0]) / 2) for item in ref_info[:-2]]
             # for count, center in enumerate(pulse_centers):
             #    print(center - floor(pulse_width[count] / 2), center + floor(pulse_width[count] / 2) , 4)
             pulse_values += [
                 np.mean(
-                    self.samples[1][int(center) - mt.floor(pulse_width[count] / 2): int(center) + mt.floor(pulse_width[count] / 2)])
+                    self.samples[1][
+                    int(center) - mt.floor(pulse_width[count] / 2): int(center) + mt.floor(pulse_width[count] / 2)])
                 for count, center in enumerate(pulse_centers)]
             self.sig_left_indexes += [(pulse_centers[i] - mt.floor(pulse_width[i] / 2))
                                       for i in range(len(pulse_centers))]
@@ -248,7 +255,7 @@ class Bob:
             self.state_table['Pulse type'] += ['signal', 'signal']
             self.state_table['Quadrature'] += ['Q', 'Q']
         next_cycle = int((ref_indexes[-1][-1] - ref_indexes[-1][0]) * int(
-            self.ref_sig_quantity[1] / self.ref_sig_quantity[0]) * 1.1) + ref_indexes[-1][-1]
+            self.ref_sig_quantity[1] / self.ref_sig_quantity[0]) * 1) + ref_indexes[-1][-1]
         self.cycle_number += 1
         self.global_index = next_cycle
 
@@ -279,28 +286,30 @@ if __name__ == '__main__':
     # oscil_filename = 'Ampl modul/2 bob pulse 0-pi2_alice 0 transformed.csv'
     oscil_filename = 'Ampl modul/amp and phase o-pi2 transformed.csv'
     # file_transform(
-    #     old_filename='Ampl modul/2 bob pulse 0-pi2_alice 0.csv',
-    #     new_filename=oscil_filename,
-    #     start_index=10)
-    #
-    # plot_only_osc = PlottingSignal(start=0, stop=1000, data_filename=oscil_filename)
+    #      old_filename='Ampl modul/2 bob pulse 0-pi2_alice 0.csv',
+    #      new_filename=oscil_filename,
+    #      start_index=0)
+
+    # plot_only_osc = PlottingSignal(start=0, stop='max', data_filename=oscil_filename)
 
     bob = Bob(data_filename=oscil_filename,
-              total_cycle_number=150,
-              step_between_ref_and_sig=4)
-              # max_indexes_in_pulse=50,
-              # min_indexes_in_pulse=5)
+              total_cycle_number=5,
+              step_between_ref_and_sig=1,
+              max_indexes_in_pulse=2000,
+              min_indexes_in_pulse=500,
+              global_index=4663)
     # ref1 = bob.ref_pulse_definition()
     for i in range(bob.total_cycle_number):
+        print(f'Current cycle: {i}')
         bob.make_cycle()  # реализация цикла: определение референсных импульсов, получение значений сигнальных импульсов
     # sig1 = bob.signal_pulse_definition(ref1)
-
+    print(bob.max_std)
     df = pd.DataFrame(bob.state_table)
     df.to_csv('CSV files/Bob class table.csv')
-
-    plot = PlottingSignal(0, max(bob.ref_right_indexes[-1], bob.sig_right_indexes[-1]) + 500,
-                          oscil_filename,(bob.ref_mid_indexes, 'coral'),
-                          (bob.sig_right_indexes, 'red'),
-                          (bob.sig_mid_indexes, 'green'),
-                          (bob.sig_left_indexes, 'blue'))
-
+    plot = PlottingSignal(0, bob.global_index + mt.floor(bob.ref_len_in_indexes_stats * 1.5),
+                          oscil_filename, (bob.sig_mid_indexes, 'green'), (bob.ref_mid_indexes, 'coral'),
+                          (bob.ref_center_dot_from_stat, 'cyan'))
+    # (bob.sig_right_indexes, 'red'),
+    #
+    # (bob.sig_left_indexes, 'blue'), )
+    # (bob.ref_right_indexes, 'cyan'))
