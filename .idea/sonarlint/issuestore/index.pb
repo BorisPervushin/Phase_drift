@@ -1,0 +1,10 @@
+
+<
+Bob_table.py,3/2/3208e3a7178a1d61f28125cfc582c44167a52049
+?
+bob_as_class.py,c/7/c79e774784d8693bfc641b0d4ff605f82594ed16
+:
+
+.gitignore,a/5/a5cc2925ca8258af241be7e5b0381edf30266302
+>
+Alice_table.py,0/e/0e6151c29717013c50a3161425acf3ea811726ca

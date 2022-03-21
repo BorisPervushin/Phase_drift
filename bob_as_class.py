@@ -3,10 +3,11 @@ import numpy as np
 import math as mt
 import matplotlib.pyplot as plt
 import time
-from memory_profiler import profile
 
 
-@profile
+# from memory_profiler import profile
+
+# @profile
 def file_transform(old_filename: str, new_filename: str, start_index=4675, sample_count=200000) -> None:
     """Трансформация файла: удаление инфомации о параметрах осциллографа, ограничение количетсва точек"""
     df = pd.read_csv(old_filename)  # , dtype={"Time": float, "Amplitude": float})
@@ -18,22 +19,22 @@ def file_transform(old_filename: str, new_filename: str, start_index=4675, sampl
     body.to_csv(new_filename, index=False)  # импортирование данных в csv файл):
 
 
-def time_took_print(function):
-    def wrapped_fun(*args, **kwargs):
-        start = time.time()
-        function(*args, **kwargs)
-        end = time.time()
-        time_taken = end - start
-        minutes = int(time_taken // 60)
-        seconds = int(time_taken // 1)
-        miliseconds = round(time_taken % 1 * 1000, 1)
-        print(f'Function {function.__name__} took {minutes} min, {seconds} sec and {miliseconds} ms seconds to run')
-
-    return wrapped_fun
+# def time_took_print(function):
+#     """Decorator managing time that has been taken by function to run"""
+#     def wrapped_fun(*args, **kwargs):
+#         start = time.time()
+#         function(*args, **kwargs)
+#         end = time.time()
+#         time_taken = end - start
+#         minutes = int(time_taken // 60)
+#         seconds = int(time_taken // 1)
+#         miliseconds = round(time_taken % 1 * 1000, 1)
+#         print(f'Function {function.__name__} took {minutes} min, {seconds} sec and {miliseconds} ms seconds to run')
+#
+#     return wrapped_fun
 
 
 class Bob:
-    # TODO: Доработка ПО для работы с импульсным режимом
     """
     Класс боб для реализации оцифровки сигнала
     Необходимо задавать: data_filename, global_index, total_cycle_number, min_indexes_in_pulse, max_indexes_in_pulse
@@ -110,20 +111,26 @@ class Bob:
         return '0' * (resolution - len(bin(right)[2:])) + bin(right)[2:]
 
     def check_using_statistic_for_ref_def(self):
+        """Проверка следующих референсных импульсов: достаточно ли они далеко друг от друга для использования критерия
+        5 СКО
+        Если достаточно далеко присваивает атрибуту using_statistics значение True"""
         if self.global_index != 0:
+            # не проверяет первый цикл
             means_of_ref_pulses = [
                 np.mean(self.samples[1][
                         mt.ceil(self.global_index + ref_center - ref_width * 0.9):
                         mt.floor(self.global_index + ref_center + ref_width * 0.9)]
                         )
                 for ref_center, ref_width in self.statistics_ref
-            ]
+            ]  # список средних значений референсных импульсов
 
             ref_ampl_bounds = [[mean - self.max_std * 5, mean + self.max_std * 5] for mean in means_of_ref_pulses]
+            # список следующих элементов: [нижняя граница, высшая граница]
 
             for bound_index, bounds in enumerate(ref_ampl_bounds[:-1]):
                 for bound in bounds:
                     if ref_ampl_bounds[bound_index + 1][0] <= bound <= ref_ampl_bounds[bound_index + 1][1]:
+                        # проверка, находится ли какая-то из границ между границами другого импульса
                         self.using_statistics = True
 
     def using_stats_for_ref_def(self):
@@ -140,14 +147,22 @@ class Bob:
         indexes_for_ref.append([self.global_index, self.global_index + self.ref_len_in_indexes_stats])
         self.using_statistics = False
 
-    def not_using_stats_for_ref_def(self, pulses_in_ref, indexes_for_ref, i_pulse_start):
+    def not_using_stats_for_ref_def(self, pulses_in_ref, indexes_for_ref, i_pulse_start) -> list:
+        """Определение референсных импульсов
+        Вывод: массив вида [
+                [l1, c1, r1, a1], индексы левой границы, центра, правой границы и значение амплитуды 1-го реф импульса
+                [l2, c2, r2, a2], индексы левой границы, центра, правой границы и значение амплитуды 2-го реф импульса
+                max_std, максимольное значение СКО импульсов по всем референсным импульсам
+                [start, end] начало и конец интервала реф импульсов
+                            ]"""
         for j in range(pulses_in_ref):
             """"Цикл поиска референсных импульсов"""
             # indexes_for_ref[j].append(i_pulse_start)
             i = i_pulse_start + int(self.min_indexes_in_pulse * 0.5)
             checking_std = max(self.max_std, float(np.std(self.samples[1][i_pulse_start:i - 1])))
             while abs(self.samples[1][i] - np.mean(self.samples[1][
-                                                   i_pulse_start:i])) <= checking_std * 5 and i < i_pulse_start + self.max_indexes_in_pulse * 1.5:
+                                                   i_pulse_start:i])) <= checking_std * 5 and i < i_pulse_start \
+                    + self.max_indexes_in_pulse * 1.5:
                 # проверка выхода за границы пяти СКО от среднего значения по значениям пмплитуд
                 checking_std = max(self.max_std, float(np.std(self.samples[1][i_pulse_start:i - 1])))
                 i += 1
@@ -211,13 +226,6 @@ class Bob:
         return indexes_for_ref
 
     def ref_pulse_definition(self) -> list:
-        """Определение референсных импульсов
-        Вывод: массив вида [
-                            [l1, c1, r1, a1], индексы левой границы, центра, правой границы и значение амплитуды 1-го реф импульса
-                            [l2, c2, r2, a2], индексы левой границы, центра, правой границы и значение амплитуды 2-го реф импульса
-                            max_std, максимольное значение СКО импульсов по всем референсным импульсам
-                            [start, end] начало и конец интервала реф импульсов
-                            ]"""
         pulses_in_ref = self.ref_sig_quantity[0]
         indexes_for_ref = [[] for _ in range(pulses_in_ref + 2)]  # возвращаемый список
         i_pulse_start = self.global_index
@@ -248,7 +256,6 @@ class Bob:
             self.sig_mid_indexes += [pulse_center for pulse_center in pulse_centers]
         return pulse_values
 
-    @time_took_print
     def make_cycle(self) -> None:
         ref_indexes = self.ref_pulse_definition()
         # a = (2 * cycle_number) / (cycle_number + 1)
